@@ -144,14 +144,12 @@ export default function ProductPage({ params }: Props) {
           {/* CTAs */}
           <div className="flex flex-wrap gap-3">
             {product.demoUrl && (
-              <a
+              <Link
                 href={product.demoUrl}
-                target="_blank"
-                rel="noopener noreferrer"
                 className={`px-6 py-3 rounded-lg font-semibold text-sm transition-colors ${accentCta}`}
               >
-                Try Live Demo ↗
-              </a>
+                Try Live Demo →
+              </Link>
             )}
             <a
               href="mailto:chinguyen10022000@gmail.com"
@@ -193,26 +191,34 @@ export default function ProductPage({ params }: Props) {
           <div className="max-w-5xl mx-auto">
             <h2 className="text-xl font-bold text-zinc-50 mb-2">Live Demo</h2>
             <p className="text-zinc-500 text-sm mb-8">
-              Interactive demo — click through the full flow
+              Interactive demo — runs entirely in your browser, no install required
             </p>
             <div
-              className={`rounded-xl border ${accentBorder} bg-zinc-900/60 p-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6`}
+              className={`rounded-xl border ${accentBorder} bg-zinc-900/60 p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6`}
             >
-              <div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse inline-block" />
+                  <span className="text-xs text-emerald-400 font-medium">Interactive — no backend required</span>
+                </div>
                 <p className="text-zinc-300 font-medium mb-1">{product.name}</p>
                 <p className="text-zinc-500 text-sm max-w-md">
-                  The demo runs in your browser — no install required. All
-                  interactions are live and interactive.
+                  {product.features[0]?.description}
                 </p>
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {product.features.map((f) => (
+                    <span key={f.title} className="text-xs px-2 py-0.5 rounded border border-zinc-800 text-zinc-600 bg-zinc-900">
+                      {f.icon} {f.title}
+                    </span>
+                  ))}
+                </div>
               </div>
-              <a
+              <Link
                 href={product.demoUrl}
-                target="_blank"
-                rel="noopener noreferrer"
                 className={`shrink-0 px-6 py-3 rounded-lg font-semibold text-sm transition-colors ${accentCta}`}
               >
-                Open Demo ↗
-              </a>
+                Open Demo →
+              </Link>
             </div>
           </div>
         </section>
