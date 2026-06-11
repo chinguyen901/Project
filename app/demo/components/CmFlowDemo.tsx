@@ -1,275 +1,473 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 
 type Preset = "cell" | "frequency" | "power";
-type NodeState = "idle" | "active" | "done" | "error";
 
-const PRESETS: Record<Preset, { label: string; yang: string; xml: string; latencies: number[] }> = {
+const PRESETS: Record<Preset, { label: string; yang: string; xml: string; latencies: number[]; errorMsg: string }> = {
   cell: {
     label: "Cell Config",
-    yang: "/ietf-interfaces:interfaces/interface[name='NR-Cell-001']/ietf-ip:ipv4/address",
-    xml: `<edit-config>
+    yang: "/GNBDUFunction=1/NRCellDU=NR-Cell-001/attributes",
+    xml: `<edit-config xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
   <target><running/></target>
   <config>
-    <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
-      <interface>
-        <name>NR-Cell-001</name>
-        <cell-id>42</cell-id>
-        <pci>87</pci>
-        <arfcn-dl>632628</arfcn-dl>
-        <tx-power dbm="23"/>
-      </interface>
-    </interfaces>
+    <GNBDUFunction xmlns="urn:3gpp:sa5:_3gpp-nr-nrm-gnbdufunction">
+      <id>1</id>
+      <NRCellDU>
+        <id>NR-Cell-001</id>
+        <attributes>
+          <cellLocalId>42</cellLocalId>
+          <nrPCI>87</nrPCI>
+          <operationalState>ENABLED</operationalState>
+          <administrativeState>UNLOCKED</administrativeState>
+        </attributes>
+      </NRCellDU>
+    </GNBDUFunction>
   </config>
 </edit-config>`,
     latencies: [12, 8, 5, 3, 6],
+    errorMsg: "YANG constraint violation: nrPCI value 87 conflicts with neighbor cell NR-Cell-002 (pci=87)",
   },
   frequency: {
     label: "Freq Band",
-    yang: "/bbf-nr-du:nr-du/cell-list/cell[name='NR-Cell-001']/frequency-info",
-    xml: `<edit-config>
+    yang: "/GNBDUFunction=1/NRCellDU=NR-Cell-001/attributes/nrFreqBand",
+    xml: `<edit-config xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
   <target><running/></target>
   <config>
-    <nr-du xmlns="urn:bbf:yang:bbf-nr-du">
-      <cell-list>
-        <cell>
-          <name>NR-Cell-001</name>
-          <frequency-info>
-            <band>n78</band>
-            <arfcn-dl>632628</arfcn-dl>
-            <arfcn-ul>632628</arfcn-ul>
-            <bw-dl>100MHz</bw-dl>
-          </frequency-info>
-        </cell>
-      </cell-list>
-    </nr-du>
+    <GNBDUFunction xmlns="urn:3gpp:sa5:_3gpp-nr-nrm-gnbdufunction">
+      <id>1</id>
+      <NRCellDU>
+        <id>NR-Cell-001</id>
+        <attributes>
+          <nrFreqBand>78</nrFreqBand>
+          <arfcnDL>632628</arfcnDL>
+          <arfcnUL>632628</arfcnUL>
+          <bSChannelBwDL>100</bSChannelBwDL>
+        </attributes>
+      </NRCellDU>
+    </GNBDUFunction>
   </config>
 </edit-config>`,
     latencies: [10, 6, 4, 3, 7],
+    errorMsg: "YANG constraint violation: arfcnDL 632628 out of range for nrFreqBand 78 (valid: 620000–653333)",
   },
   power: {
     label: "TX Power",
-    yang: "/bbf-nr-du:nr-du/cell-list/cell[name='NR-Cell-001']/tx-power-info",
-    xml: `<edit-config>
+    yang: "/GNBDUFunction=1/NRCellDU=NR-Cell-001/attributes/configuredMaxTxPower",
+    xml: `<edit-config xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
   <target><running/></target>
   <config>
-    <nr-du xmlns="urn:bbf:yang:bbf-nr-du">
-      <cell-list>
-        <cell>
-          <name>NR-Cell-001</name>
-          <tx-power-info>
-            <max-power dbm="43"/>
-            <ref-signal-power dbm="15"/>
-            <attenuation db="0"/>
-          </tx-power-info>
-        </cell>
-      </cell-list>
-    </nr-du>
+    <GNBDUFunction xmlns="urn:3gpp:sa5:_3gpp-nr-nrm-gnbdufunction">
+      <id>1</id>
+      <NRCellDU>
+        <id>NR-Cell-001</id>
+        <attributes>
+          <configuredMaxTxPower>400</configuredMaxTxPower>
+          <ssbFrequency>632628</ssbFrequency>
+          <txDirection>DL</txDirection>
+        </attributes>
+      </NRCellDU>
+    </GNBDUFunction>
   </config>
 </edit-config>`,
     latencies: [9, 7, 4, 2, 5],
+    errorMsg: "YANG constraint violation: configuredMaxTxPower 430 exceeds hardware limit 400 (0.1 dBm units)",
   },
 };
 
-const NODES = [
-  { id: "nms", label: "NMS", sub: "NETCONF Client", color: "border-cyan-500/60 bg-cyan-500/5" },
-  { id: "confd", label: "ConfD", sub: "YANG Validation", color: "border-violet-500/60 bg-violet-500/5" },
-  { id: "oam", label: "OAM Agent", sub: "C++ Middleware", color: "border-blue-500/60 bg-blue-500/5" },
-  { id: "zmq", label: "ZMQ", sub: "Message Broker", color: "border-amber-500/60 bg-amber-500/5" },
-  { id: "gnb", label: "gNB", sub: "Base Station", color: "border-emerald-500/60 bg-emerald-500/5" },
+const ARCH = [
+  {
+    id: "nms", layer: "O&M System", layerSub: "External Network Management", chi: false,
+    nodes: [{ icon: "🖥", label: "Virtuora NMS", desc: "NETCONF/SSH client — sends management RPCs to gNB" }],
+    conn: { label: "NETCONF edit-config RPC", proto: "SSH / TCP:830" },
+  },
+  {
+    id: "confd", layer: "YANG Datastore", layerSub: "Cisco ConfD — Validation Engine", chi: false,
+    nodes: [{ icon: "🗄", label: "ConfD", desc: "Validates edit-config against 3GPP TS 28.541 YANG schema" }],
+    conn: { label: "YANG subscription callback", proto: "IPC notify → OAM Agent" },
+  },
+  {
+    id: "oam", layer: "OAM Middleware", layerSub: "★ Chi Nguyen @ TMA Solutions", chi: true,
+    nodes: [
+      { icon: "⚙", label: "OAM Agent", desc: "C++ main process — bridges NMS ↔ gNB" },
+      { icon: "📋", label: "CM Module", desc: "Handles ConfD callbacks, serializes YANG → ZMQ messages" },
+      { icon: "🚨", label: "FM Module", desc: "Subscribes to ZMQ alarms, raises YANG notifications to ConfD" },
+      { icon: "📊", label: "PM Module", desc: "Collects gNB performance counters, reports via NETCONF" },
+    ],
+    conn: { label: "ZMQ REQ/REP — config apply message", proto: "tcp://127.0.0.1:5555" },
+  },
+  {
+    id: "gnb", layer: "gNB Application", layerSub: "5G Base Station Software Stack", chi: false,
+    nodes: [
+      { icon: "📡", label: "gNB App", desc: "DU software stack — receives ZMQ config, applies to radio" },
+      { icon: "📻", label: "RRU / BBU", desc: "Radio frontend hardware — executes final RF configuration" },
+    ],
+    conn: null,
+  },
 ];
+
+const LOGS: Record<Preset, { ok: string[]; err: string[] }> = {
+  cell: {
+    ok: [
+      "[NMS   ] ► Sending NETCONF edit-config — session-id: 1042, target: running",
+      "[NMS   ] ► Payload: NRCellDU=NR-Cell-001 attributes (cellLocalId=42, nrPCI=87)",
+      "[ConfD ] ► Received RPC — validating against 3GPP TS 28.541 YANG schema",
+      "[ConfD ] ✓ Schema validation passed — 4 leaves validated OK",
+      "[ConfD ] ► Triggering YANG subscription callback → OAM Agent CM Module",
+      "[★ OAM ] ► CM Module received config notification for NRCellDU=NR-Cell-001",
+      "[★ OAM ] ► CM Module serializing YANG diff → ZMQ binary message (128 bytes)",
+      "[★ ZMQ ] ► REQ socket: CM_CONFIG_UPDATE → tcp://127.0.0.1:5555",
+      "[gNB   ] ► Received CM_CONFIG_UPDATE — applying NR cell parameters",
+      "[gNB   ] ✓ Config committed to DU stack: PCI=87, cellLocalId=42, adminState=UNLOCKED",
+      "[★ ZMQ ] ✓ REP: CM_CONFIG_ACK received from gNB (RTT: 6ms)",
+      "[★ OAM ] ► Committing applied config to ConfD running datastore",
+      "[ConfD ] ✓ Datastore updated — operational state synchronized",
+      "[NMS   ] ✓ NETCONF rpc-ok received — configuration committed successfully",
+    ],
+    err: [
+      "[NMS   ] ► Sending NETCONF edit-config — session-id: 1042",
+      "[NMS   ] ► Payload: NRCellDU=NR-Cell-001 nrPCI=87",
+      "[ConfD ] ► Validating nrPCI=87 uniqueness in cell neighborhood (3GPP constraint)",
+      "[ConfD ] ✗ YANG constraint FAILED: nrPCI=87 already assigned to NRCellDU=NR-Cell-002",
+      "[ConfD ] ✗ Returning rpc-error: error-tag=invalid-value, error-type=application",
+      "[NMS   ] ✗ NETCONF rpc-error received — configuration NOT applied, rollback complete",
+    ],
+  },
+  frequency: {
+    ok: [
+      "[NMS   ] ► Sending NETCONF edit-config — session-id: 1043, target: running",
+      "[NMS   ] ► Payload: nrFreqBand=78, arfcnDL=632628, arfcnUL=632628, bSChannelBwDL=100",
+      "[ConfD ] ► Validating NR frequency band constraints (3GPP TS 28.541)",
+      "[ConfD ] ✓ arfcnDL=632628 in valid range for band 78, bSChannelBw=100MHz supported",
+      "[ConfD ] ► Subscription callback → OAM Agent — frequency band change",
+      "[★ OAM ] ► CM Module: NR frequency update — band=78 (3500–3600 MHz range)",
+      "[★ OAM ] ► CM Module serializing → ZMQ message: CM_FREQ_UPDATE (96 bytes)",
+      "[★ ZMQ ] ► REQ: CM_FREQ_UPDATE → tcp://127.0.0.1:5555",
+      "[gNB   ] ► Retuning RF subsystem to band n78, DL center: 3600 MHz",
+      "[gNB   ] ✓ RF retune complete — new DL ARFCN: 632628, BW: 100 MHz",
+      "[★ ZMQ ] ✓ REP: CM_FREQ_ACK (RTT: 9ms)",
+      "[NMS   ] ✓ NETCONF rpc-ok — frequency configuration applied",
+    ],
+    err: [
+      "[NMS   ] ► Sending NETCONF edit-config — session-id: 1043",
+      "[ConfD ] ► Validating: arfcnDL=632628 for nrFreqBand=78",
+      "[ConfD ] ✗ ERROR: arfcnDL 632628 out of valid range for band 78 (valid: 620000–653333)",
+      "[ConfD ] ✗ Returning rpc-error: invalid-value",
+      "[NMS   ] ✗ NETCONF rpc-error — frequency config rejected, no RF changes made",
+    ],
+  },
+  power: {
+    ok: [
+      "[NMS   ] ► Sending NETCONF edit-config — session-id: 1044, target: running",
+      "[NMS   ] ► Payload: configuredMaxTxPower=400 (40.0 dBm), ssbFrequency=632628",
+      "[ConfD ] ► Validating TX power against hardware capability model",
+      "[ConfD ] ✓ 400 (40.0 dBm) within hardware limit (max: 400) — OK",
+      "[ConfD ] ► Subscription callback → OAM Agent — TX power change",
+      "[★ OAM ] ► CM Module: TX power config — maxPwr=400, dir=DL, ssbFreq=632628",
+      "[★ ZMQ ] ► REQ: CM_POWER_UPDATE → tcp://127.0.0.1:5555",
+      "[gNB   ] ► Calibrating PA to 40.0 dBm DL (SSB reference: 3600 MHz)",
+      "[gNB   ] ✓ PA calibration complete — output power verified",
+      "[★ ZMQ ] ✓ REP: CM_POWER_ACK (RTT: 7ms)",
+      "[NMS   ] ✓ NETCONF rpc-ok — TX power configuration applied",
+    ],
+    err: [
+      "[NMS   ] ► Sending NETCONF edit-config — session-id: 1044",
+      "[ConfD ] ► Validating configuredMaxTxPower=430 (43.0 dBm)",
+      "[ConfD ] ✗ ERROR: 430 exceeds hardware limit 400 (40.0 dBm max for this RRU)",
+      "[ConfD ] ✗ Returning rpc-error: invalid-value",
+      "[NMS   ] ✗ NETCONF rpc-error — power config rejected, PA unchanged",
+    ],
+  },
+};
+
+function nodeFromLog(line: string): string | null {
+  if (line.startsWith("[NMS")) return "Virtuora NMS";
+  if (line.startsWith("[ConfD")) return "ConfD";
+  if (line.startsWith("[★ ZMQ")) return "CM Module";
+  if (line.startsWith("[★ OAM") && line.includes("CM Module")) return "CM Module";
+  if (line.startsWith("[★ OAM")) return "OAM Agent";
+  if (line.startsWith("[gNB")) return "gNB App";
+  return null;
+}
+
+const INTERVAL = 500;
 
 export default function CmFlowDemo() {
   const [preset, setPreset] = useState<Preset>("cell");
   const [errorInject, setErrorInject] = useState(false);
-  const [nodeStates, setNodeStates] = useState<Record<string, NodeState>>({});
+  const [activeLayerIdx, setActiveLayerIdx] = useState(-1);
+  const [activeNodeLabel, setActiveNodeLabel] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
   const [errored, setErrored] = useState(false);
   const [showXml, setShowXml] = useState(false);
   const [latencyResult, setLatencyResult] = useState<number[]>([]);
-
+  const [runLogs, setRunLogs] = useState<string[]>([]);
+  const [msgCount, setMsgCount] = useState(0);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const logContainerRef = useRef<HTMLDivElement>(null);
   const p = PRESETS[preset];
 
+  useEffect(() => {
+    if (logContainerRef.current) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    }
+  }, [runLogs]);
+
   const runFlow = useCallback(() => {
-    setNodeStates({});
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    setActiveLayerIdx(0);
+    setActiveNodeLabel(null);
     setRunning(true);
     setDone(false);
     setErrored(false);
     setLatencyResult([]);
+    setRunLogs([]);
+    setMsgCount(0);
 
-    const nodeIds = NODES.map((n) => n.id);
-    const errorAt = errorInject ? 1 : -1;
-
-    let i = 0;
-    const step = () => {
-      if (i >= nodeIds.length) {
-        setRunning(false);
-        setDone(true);
-        setLatencyResult(p.latencies);
-        return;
-      }
-      const id = nodeIds[i];
-      setNodeStates((prev) => ({ ...prev, [id]: "active" }));
-      setTimeout(() => {
-        if (i === errorAt) {
-          setNodeStates((prev) => ({ ...prev, [id]: "error" }));
-          setRunning(false);
-          setErrored(true);
-          return;
-        }
-        setNodeStates((prev) => ({ ...prev, [id]: "done" }));
-        i++;
-        setTimeout(step, 300);
-      }, 600);
-    };
-    step();
+    const logs = errorInject ? LOGS[preset].err : LOGS[preset].ok;
+    const layerSeq = errorInject ? [0, 1] : [0, 1, 2, 3];
+    const step = Math.ceil((logs.length * INTERVAL) / layerSeq.length);
+    layerSeq.forEach((li, i) => {
+      timers.current.push(setTimeout(() => setActiveLayerIdx(li), i * step));
+    });
+    logs.forEach((line, i) => {
+      timers.current.push(setTimeout(() => {
+        setRunLogs(prev => [...prev, line]);
+        setMsgCount(prev => prev + 1);
+        setActiveNodeLabel(nodeFromLog(line));
+      }, i * INTERVAL + 100));
+    });
+    timers.current.push(setTimeout(() => {
+      setRunning(false);
+      setActiveLayerIdx(-1);
+      setActiveNodeLabel(null);
+      if (errorInject) { setErrored(true); }
+      else { setDone(true); setLatencyResult(p.latencies); }
+    }, logs.length * INTERVAL + 600));
   }, [preset, errorInject, p.latencies]);
-
-  const getNodeStyle = (id: string) => {
-    const s = nodeStates[id] ?? "idle";
-    const base = NODES.find((n) => n.id === id)!;
-    if (s === "active") return "border-white/50 bg-white/5 shadow-lg scale-105";
-    if (s === "done") return base.color + " opacity-100";
-    if (s === "error") return "border-red-500/60 bg-red-500/10 scale-105";
-    return "border-zinc-800 bg-zinc-900 opacity-60";
-  };
-
-  const totalLatency = latencyResult.reduce((a, b) => a + b, 0);
 
   return (
     <div className="space-y-4">
-      {/* Controls */}
-      <div className="flex flex-wrap items-center gap-3 p-4 rounded-xl border border-zinc-800 bg-zinc-900">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-500">Config preset:</span>
-          {(Object.keys(PRESETS) as Preset[]).map((k) => (
-            <button
-              key={k}
-              onClick={() => { setPreset(k); setNodeStates({}); setDone(false); setErrored(false); setLatencyResult([]); }}
-              className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${
-                preset === k ? "border-cyan-500/60 bg-cyan-500/10 text-cyan-400" : "border-zinc-700 text-zinc-400 hover:border-zinc-600"
-              }`}
-            >
-              {PRESETS[k].label}
-            </button>
-          ))}
+      {/* Architecture Diagram */}
+      <div className="rounded-xl border border-zinc-800 overflow-hidden">
+        <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-900 flex items-center justify-between">
+          <div>
+            <span className="text-sm font-bold text-zinc-100">5G OAM — Configuration Management</span>
+            <span className="ml-3 text-xs text-zinc-500">3GPP TS 28.541 · NETCONF/YANG · ZMQ</span>
+          </div>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-500/10 border border-red-500/20">
+            <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+            <span className="text-[10px] text-red-400 font-bold">= Chi&apos;s implementation</span>
+          </div>
         </div>
-        <label className="flex items-center gap-2 ml-auto cursor-pointer">
-          <span className="text-xs text-zinc-400">Error inject</span>
-          <button
-            onClick={() => { setErrorInject((e) => !e); setNodeStates({}); setDone(false); setErrored(false); }}
-            className={`w-9 h-5 rounded-full border transition-all relative ${
-              errorInject ? "bg-red-500/30 border-red-500/60" : "bg-zinc-800 border-zinc-700"
-            }`}
-          >
-            <span className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${
-              errorInject ? "left-4 bg-red-400" : "left-0.5 bg-zinc-500"
-            }`} />
-          </button>
-        </label>
-        <button
-          onClick={runFlow}
-          disabled={running}
-          className="px-4 py-1.5 bg-cyan-500 hover:bg-cyan-400 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-950 font-semibold text-xs rounded-lg transition-colors"
-        >
-          {running ? "Running..." : done || errored ? "▶ Run Again" : "▶ Run Flow"}
-        </button>
-      </div>
-
-      {/* Node diagram */}
-      <div className="p-5 rounded-xl border border-zinc-800 bg-zinc-900/50">
-        <div className="flex items-center gap-0 overflow-x-auto">
-          {NODES.map((node, i) => (
-            <div key={node.id} className="flex items-center">
-              <div className={`rounded-xl border p-3 min-w-[90px] text-center transition-all duration-300 ${getNodeStyle(node.id)}`}>
-                <div className="text-xs font-bold text-zinc-100 mb-0.5">{node.label}</div>
-                <div className="text-[10px] text-zinc-500">{node.sub}</div>
-                <div className="mt-2 h-4 flex items-center justify-center">
-                  {nodeStates[node.id] === "active" && (
-                    <div className="flex gap-0.5">
-                      {[0, 1, 2].map((j) => (
-                        <span key={j} className="w-1 h-1 rounded-full bg-white/80 animate-bounce inline-block" style={{ animationDelay: `${j * 100}ms` }} />
-                      ))}
-                    </div>
-                  )}
-                  {nodeStates[node.id] === "done" && <span className="text-xs text-emerald-400">✓</span>}
-                  {nodeStates[node.id] === "error" && <span className="text-xs text-red-400">✗</span>}
+        <div className="p-4 bg-zinc-900/20">
+          {ARCH.map((layer, i) => (
+            <div key={layer.id}>
+              <div className={`relative rounded-xl border p-4 transition-all duration-300 ${
+                layer.chi
+                  ? "border-red-500/60 bg-gradient-to-br from-red-950/50 to-zinc-900 shadow-[0_0_28px_rgba(239,68,68,0.15)]"
+                  : activeLayerIdx === i
+                  ? "border-cyan-500/50 bg-cyan-950/20 shadow-[0_0_16px_rgba(34,211,238,0.08)]"
+                  : "border-zinc-800 bg-zinc-900/60"
+              }`}>
+                {layer.chi && (
+                  <div className="absolute -top-3 left-3">
+                    <span className="px-2 py-0.5 rounded-md bg-red-500/20 border border-red-500/40 text-[10px] font-bold text-red-400">
+                      ★ Chi Nguyen — Built &amp; maintained at TMA Solutions
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-start gap-4 mt-1">
+                  <div className="shrink-0 w-36">
+                    <div className={`text-[10px] font-bold uppercase tracking-widest ${layer.chi ? "text-red-400" : activeLayerIdx === i ? "text-cyan-400" : "text-zinc-500"}`}>{layer.layer}</div>
+                    <div className="text-[10px] text-zinc-600 mt-0.5 leading-tight">{layer.layerSub}</div>
+                    {activeLayerIdx === i && (
+                      <div className="mt-1.5 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse inline-block" />
+                        <span className="text-[10px] text-cyan-400">processing</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 flex flex-wrap gap-2">
+                    {layer.nodes.map(node => {
+                      const isActiveNode = activeNodeLabel === node.label;
+                      return (
+                        <div key={node.label} className={`flex-1 min-w-[140px] px-3 py-2.5 rounded-lg border transition-all duration-200 ${
+                          layer.chi
+                            ? isActiveNode
+                              ? "border-red-400/70 bg-red-500/25 shadow-[0_0_10px_rgba(239,68,68,0.2)]"
+                              : "border-red-500/30 bg-red-500/10"
+                            : isActiveNode
+                            ? "border-cyan-400/60 bg-cyan-500/15 shadow-[0_0_8px_rgba(34,211,238,0.12)]"
+                            : activeLayerIdx === i
+                            ? "border-cyan-500/30 bg-cyan-500/5"
+                            : "border-zinc-700/60 bg-zinc-800/40"
+                        }`}>
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span>{node.icon}</span>
+                            <span className={`text-xs font-semibold ${
+                              layer.chi
+                                ? isActiveNode ? "text-red-100" : "text-red-200"
+                                : isActiveNode ? "text-cyan-300" : "text-zinc-200"
+                            }`}>{node.label}</span>
+                            {isActiveNode && (
+                              <span className={`ml-auto w-1.5 h-1.5 rounded-full animate-pulse inline-block ${layer.chi ? "bg-red-400" : "bg-cyan-400"}`} />
+                            )}
+                          </div>
+                          <div className="text-[10px] text-zinc-500 leading-tight">{node.desc}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
-              {i < NODES.length - 1 && (
-                <div className={`w-8 h-px transition-all duration-500 ${
-                  nodeStates[NODES[i + 1].id] && nodeStates[NODES[i + 1].id] !== "idle"
-                    ? "bg-gradient-to-r from-cyan-400 to-cyan-300"
-                    : "bg-zinc-800"
-                }`} />
+              {layer.conn && (
+                <div className="flex items-center gap-3 py-0.5 pl-36 ml-4">
+                  <div className="flex flex-col items-center">
+                    <div className={`w-px h-3 ${activeLayerIdx > i ? "bg-cyan-500" : "bg-zinc-700"}`} />
+                    <div className={`border-l-[5px] border-r-[5px] border-t-[6px] border-l-transparent border-r-transparent ${activeLayerIdx > i ? "border-t-cyan-500" : "border-t-zinc-700"}`} />
+                  </div>
+                  <span className="text-[10px] text-zinc-600 italic">
+                    {layer.conn.label}{" "}
+                    <span className="font-mono text-zinc-700">({layer.conn.proto})</span>
+                  </span>
+                </div>
               )}
             </div>
           ))}
         </div>
-
-        {errored && (
-          <div className="mt-4 p-3 rounded-lg border border-red-500/30 bg-red-500/5">
-            <div className="text-xs text-red-400 font-semibold mb-1">YANG Validation Failed — rpc-error</div>
-            <pre className="text-[10px] text-red-300/70 font-mono">{`<rpc-error>
-  <error-type>application</error-type>
-  <error-tag>invalid-value</error-tag>
-  <error-message>YANG constraint violation: tx-power exceeds cell max</error-message>
-</rpc-error>`}</pre>
-          </div>
-        )}
       </div>
 
-      {/* NETCONF XML + Latency */}
+      {/* Run Panel */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800">
-            <span className="text-xs font-semibold text-zinc-400">NETCONF edit-config</span>
-            <button
-              onClick={() => setShowXml((s) => !s)}
-              className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-            >
-              {showXml ? "hide" : "show"} XML
-            </button>
+        <div className="space-y-3">
+          <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900 space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {(Object.keys(PRESETS) as Preset[]).map(k => (
+                <button key={k}
+                  onClick={() => { setPreset(k); setDone(false); setErrored(false); setLatencyResult([]); setRunLogs([]); setActiveLayerIdx(-1); setActiveNodeLabel(null); }}
+                  className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${preset === k ? "border-cyan-500/60 bg-cyan-500/10 text-cyan-400" : "border-zinc-700 text-zinc-400 hover:border-zinc-600"}`}>
+                  {PRESETS[k].label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <span className="text-xs text-zinc-400">Error inject</span>
+                <button onClick={() => { setErrorInject(e => !e); setDone(false); setErrored(false); setRunLogs([]); setActiveLayerIdx(-1); setActiveNodeLabel(null); }}
+                  className={`w-9 h-5 rounded-full border relative transition-all ${errorInject ? "bg-red-500/30 border-red-500/60" : "bg-zinc-800 border-zinc-700"}`}>
+                  <span className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${errorInject ? "left-4 bg-red-400" : "left-0.5 bg-zinc-500"}`} />
+                </button>
+              </label>
+              <button onClick={runFlow} disabled={running}
+                className="px-5 py-2 bg-cyan-500 hover:bg-cyan-400 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-950 font-bold text-xs rounded-lg transition-colors">
+                {running ? "⏳ Running..." : done || errored ? "▶ Run Again" : "▶ Run Flow"}
+              </button>
+            </div>
           </div>
-          {showXml ? (
-            <pre className="p-4 text-[10px] font-mono text-zinc-300 overflow-x-auto leading-relaxed">{p.xml}</pre>
-          ) : (
-            <div className="p-4">
-              <div className="text-xs text-zinc-500 mb-1">YANG Path</div>
-              <div className="text-xs font-mono text-cyan-300 break-all leading-relaxed">{p.yang}</div>
+
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800">
+              <span className="text-xs font-semibold text-zinc-400">NETCONF edit-config payload</span>
+              <button onClick={() => setShowXml(s => !s)} className="text-xs text-zinc-500 hover:text-zinc-300">{showXml ? "hide XML" : "show XML"}</button>
+            </div>
+            {showXml ? (
+              <pre className="p-4 text-[10px] font-mono text-zinc-300 overflow-x-auto leading-relaxed max-h-52">{p.xml}</pre>
+            ) : (
+              <div className="p-4">
+                <div className="text-[10px] text-zinc-600 mb-1 uppercase tracking-wide">YANG Path (3GPP TS 28.541)</div>
+                <div className="text-xs font-mono text-cyan-300 break-all leading-relaxed">{p.yang}</div>
+              </div>
+            )}
+          </div>
+
+          {latencyResult.length > 0 && (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-zinc-800">
+                <span className="text-xs font-semibold text-zinc-400">Per-Layer Latency</span>
+              </div>
+              <div className="p-4 space-y-2">
+                {ARCH.map((l, i) => (
+                  <div key={l.id} className="flex items-center gap-3">
+                    <span className={`text-[10px] w-20 shrink-0 ${l.chi ? "text-red-300 font-bold" : "text-zinc-500"}`}>{l.layer.split(" ")[0]}{l.chi ? " ★" : ""}</span>
+                    <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full transition-all duration-700 ${l.chi ? "bg-red-400" : "bg-cyan-400"}`}
+                        style={{ width: `${(latencyResult[i] / Math.max(...latencyResult)) * 100}%`, transitionDelay: `${i * 100}ms` }} />
+                    </div>
+                    <span className="text-[11px] font-mono text-zinc-400 w-10 text-right">{latencyResult[i]}ms</span>
+                  </div>
+                ))}
+                <div className="pt-1.5 border-t border-zinc-800 flex justify-between text-xs">
+                  <span className="text-zinc-600">Round-trip total</span>
+                  <span className="font-mono text-cyan-400 font-bold">{latencyResult.reduce((a, b) => a + b, 0)}ms</span>
+                </div>
+              </div>
             </div>
           )}
         </div>
 
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-zinc-800">
-            <span className="text-xs font-semibold text-zinc-400">Latency Breakdown</span>
-          </div>
-          <div className="p-4">
-            {latencyResult.length > 0 ? (
-              <div className="space-y-2">
-                {NODES.map((n, i) => (
-                  <div key={n.id} className="flex items-center gap-3">
-                    <span className="text-xs text-zinc-400 w-20 shrink-0">{n.label}</span>
-                    <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-cyan-500 rounded-full transition-all duration-700"
-                        style={{ width: `${(latencyResult[i] / Math.max(...latencyResult)) * 100}%`, transitionDelay: `${i * 100}ms` }}
-                      />
-                    </div>
-                    <span className="text-xs font-mono text-zinc-400 w-12 text-right">{latencyResult[i]}ms</span>
-                  </div>
-                ))}
-                <div className="pt-2 border-t border-zinc-800 flex justify-between text-xs">
-                  <span className="text-zinc-500">Round-trip total</span>
-                  <span className="font-mono text-cyan-400 font-semibold">{totalLatency}ms</span>
-                </div>
+        <div className="space-y-3">
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { label: "Messages", value: String(msgCount), color: "text-cyan-400" },
+              { label: "Status", value: running ? "Running" : done ? "Success" : errored ? "Error" : "Idle", color: running ? "text-amber-400" : done ? "text-emerald-400" : errored ? "text-red-400" : "text-zinc-500" },
+              { label: "Protocol", value: "NETCONF", color: "text-violet-400" },
+            ].map(s => (
+              <div key={s.label} className="p-3 rounded-xl border border-zinc-800 bg-zinc-900 text-center">
+                <div className={`text-sm font-bold font-mono ${s.color}`}>{s.value}</div>
+                <div className="text-[10px] text-zinc-600 mt-0.5">{s.label}</div>
               </div>
-            ) : (
-              <p className="text-xs text-zinc-600 italic">Run the flow to see per-layer latency</p>
-            )}
+            ))}
           </div>
+
+          <div className="rounded-xl border border-zinc-800 overflow-hidden">
+            <div className="px-4 py-2.5 bg-zinc-900/80 border-b border-zinc-800 flex items-center gap-2">
+              <div className="flex gap-1">
+                <span className="w-2.5 h-2.5 rounded-full bg-red-500/50 inline-block" />
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500/50 inline-block" />
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/50 inline-block" />
+              </div>
+              <span className="text-xs font-mono text-zinc-500">oam_agent — CM flow execution log</span>
+              {running && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse inline-block" />}
+            </div>
+            <div ref={logContainerRef} className="bg-zinc-950 p-4 h-64 overflow-y-auto font-mono text-[11px] leading-relaxed">
+              {runLogs.length === 0 ? (
+                <p className="text-zinc-700 italic">Click ▶ Run Flow to execute the NETCONF CM pipeline</p>
+              ) : runLogs.map((line, i) => (
+                <div key={i} className={
+                  line.includes("[★") ? "text-red-300" :
+                  line.includes("✗") ? "text-red-400" :
+                  line.includes("✓") ? "text-emerald-400" :
+                  line.startsWith("[NMS") ? "text-cyan-300/80" :
+                  line.startsWith("[ConfD") ? "text-violet-300/80" :
+                  line.startsWith("[gNB") ? "text-emerald-300/60" :
+                  "text-zinc-400"
+                }>{line}</div>
+              ))}
+              {running && (
+                <div className="flex items-center gap-1.5 text-zinc-600 mt-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping inline-block" />
+                  <span className="italic text-[10px]">processing...</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {errored && (
+            <div className="p-3 rounded-xl border border-red-500/30 bg-red-950/20">
+              <div className="text-xs text-red-400 font-bold mb-2">ConfD rpc-error response</div>
+              <pre className="text-[10px] text-red-300/70 font-mono leading-relaxed overflow-x-auto">{`<rpc-reply xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
+  <rpc-error>
+    <error-type>application</error-type>
+    <error-tag>invalid-value</error-tag>
+    <error-severity>error</error-severity>
+    <error-message>${p.errorMsg}</error-message>
+    <error-path>${p.yang}</error-path>
+  </rpc-error>
+</rpc-reply>`}</pre>
+            </div>
+          )}
         </div>
       </div>
     </div>

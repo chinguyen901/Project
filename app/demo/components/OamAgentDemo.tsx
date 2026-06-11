@@ -5,17 +5,45 @@ type NFState = "IDLE" | "INITIALIZING" | "REGISTERED";
 type NetconfState = "DISCONNECTED" | "CONNECTING" | "CONNECTED" | "SUBSCRIBED";
 type CrashType = "SIGSEGV" | "ZMQ_TIMEOUT" | "CONFD_DROP" | "OOM";
 
+const ARCH_EXTERNAL = [
+  {
+    id: "nms", side: "left" as const, icon: "🖥", label: "Virtuora NMS",
+    desc: "Sends NETCONF RPCs to ConfD", proto: "NETCONF / TCP:830",
+    color: "border-zinc-700 bg-zinc-800/40 text-zinc-300",
+  },
+  {
+    id: "confd", side: "left" as const, icon: "🗄", label: "ConfD",
+    desc: "YANG datastore — routes callbacks & notifications", proto: "IPC callbacks",
+    color: "border-violet-500/30 bg-violet-500/5 text-violet-200",
+  },
+  {
+    id: "gnb", side: "right" as const, icon: "📡", label: "gNB App",
+    desc: "DU software stack — applies config, publishes alarms", proto: "ZMQ / tcp:5555",
+    color: "border-emerald-500/30 bg-emerald-500/5 text-emerald-200",
+  },
+];
+
+const ARCH_MODULES = [
+  { icon: "🧠", label: "OAM_AGENT", sub: "Main process thread — lifecycle, state machine, watchdog" },
+  { icon: "📋", label: "CM Module", sub: "Handles ConfD config callbacks → ZMQ CM_CONFIG_UPDATE" },
+  { icon: "🚨", label: "FM Module", sub: "ZMQ SUB alarm receiver → ITU-T X.733 → YANG notify" },
+  { icon: "📊", label: "PM Module", sub: "ZMQ PM counter polling → NETCONF report upload" },
+  { icon: "🔌", label: "ZMQ Socket", sub: "REQ/REP + PUB/SUB — full-duplex gNB interface" },
+  { icon: "🔗", label: "NETCONF Session", sub: "SSH session-id:1042 to ConfD — persistent connection" },
+];
+
 const BOOT_LOGS = [
-  { t: 100, msg: "[2025-06-10 09:00:00.001][INFO][OAM_AGENT] Starting OAM Agent v2.4.1..." },
-  { t: 200, msg: "[2025-06-10 09:00:00.045][INFO][OAM_LIB]   Loading configuration from /etc/oam/config.xml" },
-  { t: 350, msg: "[2025-06-10 09:00:00.112][INFO][OAM_LIB]   OAM_LIB initialized — protocol: NETCONF/YANG" },
-  { t: 500, msg: "[2025-06-10 09:00:00.230][INFO][OAM_CM]    CM module started — YANG model: 3GPP TS 28.541" },
-  { t: 700, msg: "[2025-06-10 09:00:00.380][INFO][OAM_FM]    FM module started — alarm store ready (0 active)" },
-  { t: 900, msg: "[2025-06-10 09:00:00.512][INFO][OAM_PM]    PM module started — counter interval: 15s" },
-  { t: 1100, msg: "[2025-06-10 09:00:00.700][INFO][OAM_AGENT] Connecting to ConfD at 127.0.0.1:830 (SSH/NETCONF)..." },
-  { t: 1400, msg: "[2025-06-10 09:00:01.020][INFO][OAM_AGENT] NETCONF session established — session-id: 1042" },
-  { t: 1700, msg: "[2025-06-10 09:00:01.340][INFO][OAM_AGENT] Subscribed to YANG notifications — xpath: /nr-du" },
-  { t: 2000, msg: "[2025-06-10 09:00:01.650][INFO][OAM_AGENT] OAM Agent READY — NF state: REGISTERED ✓" },
+  { t: 200,  msg: "[2025-06-10 09:00:00.001][INFO][OAM_AGENT] Starting OAM Agent v2.4.1..." },
+  { t: 500,  msg: "[2025-06-10 09:00:00.045][INFO][OAM_LIB]   Loading configuration from /etc/oam/config.xml" },
+  { t: 900,  msg: "[2025-06-10 09:00:00.112][INFO][OAM_LIB]   OAM_LIB initialized — protocol: NETCONF/YANG (3GPP TS 28.541)" },
+  { t: 1300, msg: "[2025-06-10 09:00:00.230][INFO][OAM_CM]    CM module started — YANG model: _3gpp-nr-nrm-gnbdufunction" },
+  { t: 1800, msg: "[2025-06-10 09:00:00.380][INFO][OAM_FM]    FM module started — alarm store ready (0 active), ITU-T X.733" },
+  { t: 2300, msg: "[2025-06-10 09:00:00.512][INFO][OAM_PM]    PM module started — counter interval: 15s" },
+  { t: 2800, msg: "[2025-06-10 09:00:00.650][INFO][OAM_AGENT] Binding ZMQ endpoint tcp://127.0.0.1:5555 — waiting for gNB connection" },
+  { t: 3300, msg: "[2025-06-10 09:00:00.820][INFO][OAM_AGENT] Connecting to ConfD at 127.0.0.1:830 (SSH/NETCONF)..." },
+  { t: 4000, msg: "[2025-06-10 09:00:01.140][INFO][OAM_AGENT] NETCONF session established — session-id: 1042" },
+  { t: 4700, msg: "[2025-06-10 09:00:01.460][INFO][OAM_AGENT] Subscribed to YANG notifications — xpath: /GNBDUFunction=1/NRCellDU" },
+  { t: 5400, msg: "[2025-06-10 09:00:01.780][INFO][OAM_AGENT] OAM Agent READY — NF state: REGISTERED ✓" },
 ];
 
 const CRASH_LOGS: Record<CrashType, string[]> = {
@@ -40,7 +68,7 @@ const CRASH_LOGS: Record<CrashType, string[]> = {
     "[09:18:30.050][ERROR][OAM_AGENT] Active YANG subscriptions lost — 3 pending notifications dropped",
     "[09:18:30.100][INFO ][OAM_AGENT] NF state → INITIALIZING — waiting for ConfD restart",
     "[09:18:35.500][INFO ][OAM_AGENT] ConfD available — reconnecting NETCONF session...",
-    "[09:18:36.200][INFO ][OAM_AGENT] NETCONF session-id: 1044 established. Re-subscribing to /nr-du",
+    "[09:18:36.200][INFO ][OAM_AGENT] NETCONF session-id: 1044 established. Re-subscribing to /GNBDUFunction=1/NRCellDU",
     "[09:18:36.800][INFO ][OAM_AGENT] NF state → REGISTERED — ConfD recovery complete.",
   ],
   OOM: [
@@ -58,17 +86,17 @@ export default function OamAgentDemo() {
   const [booted, setBooted] = useState(false);
   const [nfState, setNfState] = useState<NFState>("IDLE");
   const [netconfState, setNetconfState] = useState<NetconfState>("DISCONNECTED");
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const [activeModule, setActiveModule] = useState<string | null>(null);
+  const logContainerRef = useRef<HTMLDivElement>(null);
   const timerRefs = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (logContainerRef.current) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    }
   }, [logs]);
 
-  const clearTimers = () => {
-    timerRefs.current.forEach(clearTimeout);
-    timerRefs.current = [];
-  };
+  const clearTimers = () => { timerRefs.current.forEach(clearTimeout); timerRefs.current = []; };
 
   const boot = useCallback(() => {
     clearTimers();
@@ -77,18 +105,24 @@ export default function OamAgentDemo() {
     setBooted(false);
     setNfState("IDLE");
     setNetconfState("DISCONNECTED");
+    setActiveModule(null);
 
     BOOT_LOGS.forEach(({ t, msg }, i) => {
       const timer = setTimeout(() => {
-        setLogs((prev) => [...prev, msg]);
-        if (i === 1) setNfState("INITIALIZING");
-        if (i === 6) setNetconfState("CONNECTING");
-        if (i === 7) setNetconfState("CONNECTED");
-        if (i === 8) setNetconfState("SUBSCRIBED");
+        setLogs(prev => [...prev, msg]);
+        if (i === 1) { setNfState("INITIALIZING"); setActiveModule("OAM_AGENT"); }
+        if (i === 3) setActiveModule("CM Module");
+        if (i === 4) setActiveModule("FM Module");
+        if (i === 5) setActiveModule("PM Module");
+        if (i === 6) setActiveModule("ZMQ Socket");
+        if (i === 7) setNetconfState("CONNECTING");
+        if (i === 8) { setNetconfState("CONNECTED"); setActiveModule("NETCONF Session"); }
+        if (i === 9) setNetconfState("SUBSCRIBED");
         if (i === BOOT_LOGS.length - 1) {
           setNfState("REGISTERED");
           setBooting(false);
           setBooted(true);
+          setActiveModule(null);
         }
       }, t);
       timerRefs.current.push(timer);
@@ -99,7 +133,7 @@ export default function OamAgentDemo() {
     const crashLines = CRASH_LOGS[type];
     crashLines.forEach((line, i) => {
       const timer = setTimeout(() => {
-        setLogs((prev) => [...prev, line]);
+        setLogs(prev => [...prev, line]);
         if (i === 2 && type !== "OOM") setNfState("INITIALIZING");
         if (i === crashLines.length - 1) setNfState("REGISTERED");
       }, i * 400);
@@ -118,7 +152,6 @@ export default function OamAgentDemo() {
     CONNECTED: "text-blue-400 border-blue-500/40",
     SUBSCRIBED: "text-cyan-400 border-cyan-500/40",
   };
-
   const lineColor = (line: string) => {
     if (line.includes("[FATAL]")) return "text-red-400";
     if (line.includes("[ERROR]")) return "text-red-300/80";
@@ -129,6 +162,78 @@ export default function OamAgentDemo() {
 
   return (
     <div className="space-y-4">
+      {/* Architecture Diagram */}
+      <div className="rounded-xl border border-zinc-800 overflow-hidden">
+        <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-900 flex items-center justify-between">
+          <div>
+            <span className="text-sm font-bold text-zinc-100">OAM Agent — System Architecture</span>
+            <span className="ml-3 text-xs text-zinc-500">C++ · ZMQ · NETCONF/YANG · 3GPP TS 28.541</span>
+          </div>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-500/10 border border-red-500/20">
+            <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+            <span className="text-[10px] text-red-400 font-bold">= Chi&apos;s implementation</span>
+          </div>
+        </div>
+        <div className="p-4 bg-zinc-900/20">
+          {/* External context */}
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            {ARCH_EXTERNAL.filter(e => e.side === "left").map(ext => (
+              <div key={ext.id} className={`rounded-xl border p-3 ${ext.color}`}>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span>{ext.icon}</span>
+                  <span className="text-xs font-semibold">{ext.label}</span>
+                </div>
+                <div className="text-[10px] text-zinc-500 leading-tight mb-1">{ext.desc}</div>
+                <div className="text-[10px] font-mono text-zinc-600">{ext.proto}</div>
+              </div>
+            ))}
+            <div className="flex items-center justify-center">
+              <div className="text-[10px] text-zinc-600 italic text-center leading-relaxed">
+                ← NETCONF / IPC →<br /><span className="text-zinc-700">bidirectional</span>
+              </div>
+            </div>
+            {ARCH_EXTERNAL.filter(e => e.side === "right").map(ext => (
+              <div key={ext.id} className={`rounded-xl border p-3 ${ext.color}`}>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span>{ext.icon}</span>
+                  <span className="text-xs font-semibold">{ext.label}</span>
+                </div>
+                <div className="text-[10px] text-zinc-500 leading-tight mb-1">{ext.desc}</div>
+                <div className="text-[10px] font-mono text-zinc-600">{ext.proto}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* OAM Agent — Chi's work */}
+          <div className="relative rounded-xl border border-red-500/60 bg-gradient-to-br from-red-950/50 to-zinc-900 shadow-[0_0_32px_rgba(239,68,68,0.18)] p-4">
+            <div className="absolute -top-3 left-3">
+              <span className="px-2 py-0.5 rounded-md bg-red-500/20 border border-red-500/40 text-[10px] font-bold text-red-400">
+                ★ OAM Agent — Fully built &amp; maintained by Chi Nguyen @ TMA Solutions
+              </span>
+            </div>
+            <div className="text-[10px] font-bold uppercase tracking-widest text-red-400 mb-3 mt-1">OAM Agent Process (C++)</div>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              {ARCH_MODULES.map(mod => (
+                <div key={mod.label} className={`px-3 py-2.5 rounded-lg border transition-all duration-200 ${
+                  activeModule === mod.label
+                    ? "border-red-400/60 bg-red-500/20 shadow-[0_0_12px_rgba(239,68,68,0.2)]"
+                    : booted
+                    ? "border-red-500/30 bg-red-500/10"
+                    : "border-zinc-700/60 bg-zinc-800/40"
+                }`}>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span>{mod.icon}</span>
+                    <span className={`text-xs font-semibold ${activeModule === mod.label ? "text-red-200" : booted ? "text-red-300/80" : "text-zinc-400"}`}>{mod.label}</span>
+                    {activeModule === mod.label && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse inline-block" />}
+                  </div>
+                  <div className="text-[10px] text-zinc-500 leading-tight">{mod.sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* State machines + controls */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900">
@@ -136,9 +241,7 @@ export default function OamAgentDemo() {
           <div className="flex items-center gap-2">
             {(["IDLE", "INITIALIZING", "REGISTERED"] as NFState[]).map((s, i) => (
               <div key={s} className="flex items-center gap-1">
-                <span className={`text-xs px-2 py-1 rounded-lg border transition-all ${nfState === s ? NFState_STYLE[s] : "text-zinc-700 border-zinc-800"}`}>
-                  {s}
-                </span>
+                <span className={`text-xs px-2 py-1 rounded-lg border transition-all ${nfState === s ? NFState_STYLE[s] : "text-zinc-700 border-zinc-800"}`}>{s}</span>
                 {i < 2 && <span className="text-zinc-800 text-xs">→</span>}
               </div>
             ))}
@@ -147,20 +250,16 @@ export default function OamAgentDemo() {
         <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900">
           <div className="text-xs text-zinc-500 mb-3 font-semibold">NETCONF State Machine</div>
           <div className="grid grid-cols-2 gap-1">
-            {(["DISCONNECTED", "CONNECTING", "CONNECTED", "SUBSCRIBED"] as NetconfState[]).map((s) => (
-              <span key={s} className={`text-xs px-2 py-1 rounded-lg border text-center transition-all ${netconfState === s ? NC_STYLE[s] : "text-zinc-700 border-zinc-800"}`}>
-                {s}
-              </span>
+            {(["DISCONNECTED", "CONNECTING", "CONNECTED", "SUBSCRIBED"] as NetconfState[]).map(s => (
+              <span key={s} className={`text-xs px-2 py-1 rounded-lg border text-center transition-all ${netconfState === s ? NC_STYLE[s] : "text-zinc-700 border-zinc-800"}`}>{s}</span>
             ))}
           </div>
         </div>
         <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900">
           <div className="text-xs text-zinc-500 mb-3 font-semibold">Thread Model</div>
           <div className="grid grid-cols-2 gap-1">
-            {["OAM_AGENT", "comm_thread", "sys_thread", "OAM_RX"].map((t) => (
-              <span key={t} className={`text-[10px] px-2 py-1.5 rounded font-mono border text-center ${booted ? "text-violet-300/80 border-violet-500/20 bg-violet-500/5" : "text-zinc-700 border-zinc-800"}`}>
-                {t}
-              </span>
+            {["OAM_AGENT", "comm_thread", "sys_thread", "OAM_RX"].map(t => (
+              <span key={t} className={`text-[10px] px-2 py-1.5 rounded font-mono border text-center transition-all ${booted ? "text-violet-300/80 border-violet-500/20 bg-violet-500/5" : "text-zinc-700 border-zinc-800"}`}>{t}</span>
             ))}
           </div>
         </div>
@@ -177,42 +276,33 @@ export default function OamAgentDemo() {
             </div>
             <span className="text-xs font-mono text-zinc-500">oam_agent — /var/log/oam/oam_agent.log</span>
           </div>
-          <button
-            onClick={boot}
-            disabled={booting}
-            className="text-xs px-3 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 rounded transition-colors"
-          >
+          <button onClick={boot} disabled={booting}
+            className="text-xs px-3 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 rounded transition-colors">
             {booting ? "Booting..." : booted ? "↺ Reboot" : "▶ Boot"}
           </button>
         </div>
-        <div className="bg-zinc-950 p-4 h-56 overflow-y-auto font-mono text-xs leading-relaxed">
+        <div ref={logContainerRef} className="bg-zinc-950 p-4 h-56 overflow-y-auto font-mono text-xs leading-relaxed">
           {logs.length === 0 && !booting && (
             <p className="text-zinc-700 italic">Click ▶ Boot to start the OAM Agent startup sequence</p>
           )}
-          {logs.map((line, i) => (
-            <div key={i} className={lineColor(line)}>{line}</div>
-          ))}
+          {logs.map((line, i) => <div key={i} className={lineColor(line)}>{line}</div>)}
           {booting && (
             <div className="flex items-center gap-1.5 text-zinc-600 mt-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
               <span className="italic">Initializing...</span>
             </div>
           )}
-          <div ref={logEndRef} />
         </div>
       </div>
 
       {/* Crash injection */}
       {booted && (
         <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900">
-          <div className="text-xs text-zinc-500 mb-3">Crash Injection — simulate failure scenarios</div>
-          <div className="flex flex-wrap gap-2">
-            {(["SIGSEGV", "ZMQ_TIMEOUT", "CONFD_DROP", "OOM"] as CrashType[]).map((t) => (
-              <button
-                key={t}
-                onClick={() => injectCrash(t)}
-                className="text-xs px-3 py-1.5 rounded-lg border border-red-500/30 text-red-400 bg-red-500/5 hover:bg-red-500/10 transition-colors font-mono"
-              >
+          <div className="text-xs text-zinc-500 mb-3 font-semibold">Crash Injection — simulate failure &amp; recovery scenarios</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            {(["SIGSEGV", "ZMQ_TIMEOUT", "CONFD_DROP", "OOM"] as CrashType[]).map(t => (
+              <button key={t} onClick={() => injectCrash(t)}
+                className="text-xs px-3 py-2 rounded-lg border border-red-500/30 text-red-400 bg-red-500/5 hover:bg-red-500/10 transition-colors font-mono">
                 💥 {t}
               </button>
             ))}
